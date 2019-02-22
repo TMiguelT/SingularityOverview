@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pipenv</title>
+    <meta charset="utf-8">
+    <style>
+        @import url(https://fonts.googleapis.com/css?family=Yanone+Kaffeesatz);
+        @import url(https://fonts.googleapis.com/css?family=Droid+Serif:400,700,400italic);
+        @import url(https://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700,400italic);
+
+        body {
+            font-family: 'Droid Serif';
+        }
+
+        h1, h2, h3 {
+            font-family: 'Yanone Kaffeesatz';
+            font-weight: normal;
+        }
+
+        .remark-code, .remark-inline-code {
+            font-family: 'Ubuntu Mono';
+        }
+
+        img {
+            max-width: 50%;
+        }
+    </style>
+</head>
+<body>
+<textarea id="source">
+class: center, middle
+
+# Singularity
+
+.center[![](singularity.png)]
+
+---
+
+## Motivation
+
+You probably want to use Singularity for the same reasons you would want to use Docker, or any other container technology:
+* You want reproducibility in your analyses - fixed and checksummed versions of tools
+* You don't want to have to manually install (or ask the sysadmins to) all the tools you need
+* You want your pipeline to be portable, and runnable on cloud or another HPC
+* You want to use an out-of-the-box pipeline, written in WDL, CWL, SnakeMake, Nextflow etc
+
+---
+
+## Motivation
+### Why not use Docker?
+* The [Docker daemon attack surface](https://docs.docker.com/engine/security/security/#docker-daemon-attack-surface) refers to the fact that:
+    * You can mount any filesystem into a Docker image, and them modify it inside that container
+    * Even if this filesystem is owned by someone else, you can still do this, because Docker runs as root
+    * Inside this container you can also gain root permissions
+* This means that Docker is not suitable for use in shared HPC systems
+
+---
+
+## Replacing Docker CLI commands
+
+Purpose | Docker | Singularity
+--- | --- | ---
+Obtaining an image from Docker Hub | `docker pull ubuntu` | `singularity pull docker://ubuntu`
+Running an image | `docker run biocontainers/bwa` | `singularity run docker://biocontainers/bwa`
+Running an image with a custom command | `docker run --entrypoint ls ubuntu -a` | `singularity exec docker://ubuntu ls -a`
+Building from a Dockerfile | `docker build -t my_image .` | Not available
+Bind mounting | `docker run -v /path/to/inputs:/inputs index /inputs/input.bam` | `singularity exec --bind /path/to/inputs:/inputs samtools index /inputs/input.bam`
+
+---
+
+## Full CLI
+
+```
+Usage:
+  singularity [global options...] \<command\>
+
+Available Commands:
+  build       Build a new Singularity container
+  capability  Manage Linux capabilities on containers
+  exec        Execute a command within container
+  inspect     Display metadata for container if available
+  instance    Manage containers running in the background
+  keys        Manage OpenPGP key stores
+  pull        Pull a container from a URI
+  push        Push a container to a Library URI
+  run         Launch a runscript within container
+  run-help    Display help for container if available
+  search      Search the library
+  shell       Run a Bourne shell within container
+  sign        Attach cryptographic signatures to container
+  test        Run defined tests for this particular container
+  verify      Verify cryptographic signatures on container
+  version     Show application version
+```
+---
+
+## Singularity Pitfalls
+### Writeable Images
+
+* Docker users a layered filesystem, which means that the container sees the contents of the base image, but whenever it writes new data, it does so on a new, writeable layer of the filesystem.
+* By default, Singularity has no writeable layer, which means that any files that write to anywhere on the image (except for mounted directories) will fail:
+```bash
+singularity exec docker://ubuntu bash -c 'touch /root/test.txt'
+touch: cannot touch '/root/test.txt': Permission denied
+```
+* However, there are workarounds:
+    * If you have root, you can run an image with `--overlay`, which will use a Docker-esque overlay
+    * You can add a bind mount where the container needs to write
+    * Singularity automatically bind mounts `$HOME`, `/tmp`, and other useful directories, so most well designed tools will not fail
+
+---
+
+## Image Formats
+
+* Singularity image formats have changed considerably since Singularity 2
+* There are now only two options:
+    * `.sif`, Singularity's custom image format. It is compressed and read-only
+    * A sandbox directory, which is writeable and uncompressed.
+* You should use the `.sif` format whenever possible
+
+---
+
+## Native Singularity Images
+
+Singularity's equivalent of a Dockerfile is a definition file (`.def`):
+
+```
+Bootstrap: docker
+From: ubuntu:16.04
+
+%post
+    apt-get -y update
+    apt-get -y install fortune cowsay lolcat
+
+%environment
+    export LC_ALL=C
+    export PATH=/usr/games:$PATH
+
+%runscript
+    fortune | cowsay | lolcat
+```
+---
+
+## Native Singularity Images
+
+The definition file has the following sections:
+
+* The header: defines the base OS or image used to build this image
+* `%setup`: Commands executed on the host system outside of the container after the base OS has been installed
+* `%files`: allows you to copy files from your host system into the container
+* `%environment`: allows you to define environment variables that will be set at runtime.
+* `%post`: Commands executed within the container after the base OS has been installed at build time
+* `%runscript`: The script or command that is run when this image is `singularity run`
+
+---
+
+## Native Singularity Images
+
+* You can build and run an image using the definition file like this:
+    ```bash
+    sudo singularity build lolcow.sif lolcow.def
+    singularity run lolcow.sif
+    ```
+* Note that this requires root!
+
+---
+
+## Singularity with Workflow Engines
+### Cromwell (CWL and WDL)
+Cromwell does not have native support for Singularity, but it does let you customize the command run when it needs to submit a containerized job:
+
+```
+submit-docker = """
+    # Ensure singularity is loaded if it's installed as a module
+    module load Singularity/3.0.1
+
+    # Build the Docker image into a singularity image
+    IMAGE=${cwd}/${docker}.sif
+    singularity build $IMAGE docker://${docker}
+
+    # Submit the script to SLURM
+    sbatch \
+      --wait \
+      -J ${job_name} \
+      -D ${cwd} \
+      -o ${cwd}/execution/stdout \
+      -e ${cwd}/execution/stderr \
+      -t ${runtime_minutes} \
+      ${"-c " + cpus} \
+      --mem-per-cpu=${requested_memory_mb_per_core} \
+      --wrap "singularity exec --bind ${cwd}:${docker_cwd} $IMAGE ${job_shell} ${script}"
+"""
+```
+
+---
+
+### Snakemake
+Snakemake has native Singularity support.
+
+You can define a rule like this:
+
+```
+rule NAME:
+    input:
+        "table.txt"
+    output:
+        "plots/myplot.pdf"
+    singularity:
+        "docker://joseespinosa/docker-r-ggplot2"
+    script:
+        "scripts/plot-stuff.R"
+
+```
+
+And then run it like this:
+
+```bash
+snakemake --use-singularity
+```
+
+</textarea>
+<script src="https://unpkg.com/react@16/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@16/umd/react-dom.development.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/react-json-view@1.19.1/dist/main.min.js"></script>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js">
+</script>
+<script>
+    var slideshow = remark.create();
+</script>
+</body>
+</html>
