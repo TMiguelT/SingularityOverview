@@ -24,7 +24,9 @@
         img {
             max-width: 50%;
         }
+    
     </style>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.7.5/css/bulma.min.css" rel="stylesheet">
 </head>
 <body>
 <textarea id="source">
@@ -35,29 +37,32 @@ class: center, middle
 .center[![](singularity.png)]
 
 ---
-
 ## Motivation
 
+.content[
 You probably want to use Singularity for the same reasons you would want to use Docker, or any other container technology:
 * You want reproducibility in your analyses - fixed and checksummed versions of tools
 * You don't want to have to manually install (or ask the sysadmins to) all the tools you need
 * You want your pipeline to be portable, and runnable on cloud or another HPC
 * You want to use an out-of-the-box pipeline, written in WDL, CWL, SnakeMake, Nextflow etc
+]
 
 ---
 
 ## Motivation
 ### Why not use Docker?
+.content[
 * The [Docker daemon attack surface](https://docs.docker.com/engine/security/security/#docker-daemon-attack-surface) refers to the fact that:
     * You can mount any filesystem into a Docker image, and them modify it inside that container
     * Even if this filesystem is owned by someone else, you can still do this, because Docker runs as root
     * Inside this container you can also gain root permissions
 * This means that Docker is not suitable for use in shared HPC systems
-
+]
 ---
 
 ## Replacing Docker CLI commands
 
+.content[
 Purpose | Docker | Singularity
 --- | --- | ---
 Obtaining an image from Docker Hub | `docker pull ubuntu` | `singularity pull docker://ubuntu`
@@ -65,6 +70,7 @@ Running an image | `docker run biocontainers/bwa` | `singularity run docker://bi
 Running an image with a custom command | `docker run --entrypoint ls ubuntu -a` | `singularity exec docker://ubuntu ls -a`
 Building from a Dockerfile | `docker build -t my_image .` | Not available
 Bind mounting | `docker run -v /path/to/inputs:/inputs index /inputs/input.bam` | `singularity exec --bind /path/to/inputs:/inputs samtools index /inputs/input.bam`
+]
 
 ---
 
@@ -97,6 +103,7 @@ Available Commands:
 ## Singularity Pitfalls
 ### Writeable Images
 
+.content[
 * Docker users a layered filesystem, which means that the container sees the contents of the base image, but whenever it writes new data, it does so on a new, writeable layer of the filesystem.
 * By default, Singularity has no writeable layer, which means that any files that write to anywhere on the image (except for mounted directories) will fail:
 ```bash
@@ -107,16 +114,19 @@ touch: cannot touch '/root/test.txt': Permission denied
     * If you have root, you can run an image with `--overlay`, which will use a Docker-esque overlay
     * You can add a bind mount where the container needs to write
     * Singularity automatically bind mounts `$HOME`, `/tmp`, and other useful directories, so most well designed tools will not fail
+]
 
 ---
 
 ## Image Formats
 
+.content[
 * Singularity image formats have changed considerably since Singularity 2
 * There are now only two options:
     * `.sif`, Singularity's custom image format. It is compressed and read-only
     * A sandbox directory, which is writeable and uncompressed.
 * You should use the `.sif` format whenever possible
+]
 
 ---
 
@@ -143,6 +153,7 @@ From: ubuntu:16.04
 
 ## Native Singularity Images
 
+.content[
 The definition file has the following sections:
 
 * The header: defines the base OS or image used to build this image
@@ -151,23 +162,35 @@ The definition file has the following sections:
 * `%environment`: allows you to define environment variables that will be set at runtime.
 * `%post`: Commands executed within the container after the base OS has been installed at build time
 * `%runscript`: The script or command that is run when this image is `singularity run`
+]
 
 ---
 
 ## Native Singularity Images
 
+.content[
 * You can build and run an image using the definition file like this:
     ```bash
     sudo singularity build lolcow.sif lolcow.def
     singularity run lolcow.sif
     ```
 * Note that this requires root!
+]
 
 ---
 
 ## Singularity with Workflow Engines
 ### Cromwell (CWL and WDL)
-Cromwell does not have native support for Singularity, but it does let you customize the command run when it needs to submit a containerized job:
+
+.content[
+* Cromwell does not have native support for Singularity, but it does let you customize the command run when it needs to submit a containerized job
+* For more up-to-date refer to the [official documentation](https://cromwell.readthedocs.io/en/develop/tutorials/Containers/#singularity)
+]
+
+
+---
+## Singularity with Workflow Engines
+### Cromwell (CWL and WDL)
 
 ```
 submit-docker = """
